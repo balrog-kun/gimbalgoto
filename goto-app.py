@@ -6,7 +6,7 @@ import json
 import math
 import time
 import serial, serial.tools.list_ports
-import simplebgc.commands, simplebgc.command_names, simplebgc.command_ids
+import simplebgc.commands, simplebgc.command_ids
 import simplebgc.command_parser, simplebgc.serial, simplebgc.units
 import struct
 import traceback
@@ -154,7 +154,7 @@ class GimbalConnection:
         cb(status, **kwargs)
 
     def handle_cmd(self, raw_cmd):
-        name = simplebgc.command_names.get_command_name(raw_cmd.id)
+        name = simplebgc.command_ids.get_command_name(raw_cmd.id)
         print('Received ' + name + ' from gimbal')
 
         try:
@@ -165,12 +165,12 @@ class GimbalConnection:
             return
 
         if isinstance(cmd, simplebgc.commands.ConfirmInCmd):
-            cmd_name = simplebgc.command_names.get_command_name(cmd.cmd_id)
+            cmd_name = simplebgc.command_ids.get_command_name(cmd.cmd_id)
             print(f'{cmd_name} confirmed, data {cmd.data}')
             return
 
         if isinstance(cmd, simplebgc.commands.ErrorInCmd):
-            cmd_name = simplebgc.command_names.get_command_name(cmd.cmd_id)
+            cmd_name = simplebgc.command_ids.get_command_name(cmd.cmd_id)
             try:
                 err_name = simplebgc.commands.ErrorCodeBasic(cmd.error_code).name
             except:
