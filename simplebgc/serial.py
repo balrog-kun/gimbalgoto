@@ -21,6 +21,9 @@ Message = namedtuple(
     'Message',
     'start_character command_id payload_size header_checksum payload checksum')
 
+class DataShortException(Exception):
+    pass
+
 # The following factor is used to convert degrees to the units used by the
 # SimpleBGC 2.6 serial protocol.
 degree_factor = 0.02197265625
@@ -93,6 +96,9 @@ def pack_message(message: Message) -> bytes:
 
 
 def unpack_message(data: bytes) -> (Message, int):
+    if len(data) < 5: # Header + v1 CRC
+        raise DataShortException()
+
     header = MessageHeader._make(struct.unpack('<BBBB', data[:4]))
     if header.start_character not in [v1_start_char, v2_start_char]:
         raise Exception('Wrong header start char')
@@ -102,6 +108,9 @@ def unpack_message(data: bytes) -> (Message, int):
 
     crc_size = 2 if header.start_character == v2_start_char else 1
     cmd_size = 4 + header.payload_size + crc_size
+
+    if len(data) < cmd_size:
+        raise DataShortException()
 
     message_format = (v1_message_format if version == 1 else v2_message_format).format(header.payload_size)
     message = Message._make(struct.unpack(message_format, data[:cmd_size]))
