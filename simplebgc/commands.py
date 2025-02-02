@@ -435,7 +435,8 @@ AhrsHelperInCmd = NamedTuple('AhrsHelperInCmd', [
 ])
 
 RealtimeDataCustomInCmd = NamedTuple('RealtimeDataCustomInCmd', [
-
+    ('timestamp_ms', int),
+    ('data', bytes),
 ])
 
 AdjVarsStateInCmd = NamedTuple('AdjVarsStateInCmd', [
@@ -558,3 +559,12 @@ class MotorsOffOutCmd(NamedTuple):
 
     def pack(self) -> bytes:
         return struct.pack('<B', *self)
+
+# outgoing CMD_REALTIME_DATA_CUSTOM - request configurable realtime data
+class RealtimeDataCustomOutCmd(NamedTuple):
+    # TODO: split by bits
+    flags: int
+    reserved: bytes = b'\0' * 6
+
+    def pack(self) -> bytes:
+        return struct.pack('<I6s', *self)
