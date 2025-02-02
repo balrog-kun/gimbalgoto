@@ -527,6 +527,31 @@ class GimbalGoToApp:
         self.gimbal.set_motors_on_off(not self.motors_off.get())
         self.update_widget_states()
 
+    @staticmethod
+    def altaz_to_gimbal_angles(altaz, roll):
+        # Modify this for other gimbals or other camera mounting options.
+        #
+        # This and the following function handle gimbal angles in the order Yaw, Pitch, Roll (ypr),
+        # this is not the same as SimpleBGC API standard order which uses Roll, Pitch, Yaw everywhere.
+        #
+        # The Pilotfly H2 "euler order" is Cam, Pitch, Roll, Yaw, i.e. the pitch motor+arm is mounted
+        # at the end of the roll motor+arm.  This means that with a camera mounted the normal way
+        # (looking forward, gimbal pitch is camera pitch), with a high enough roll the pitch angles
+        # become limited and at 90deg roll we're at a gimbal lock and pitch is 0.  Thus let's mount
+        # the camera sideways, looking "right" instead of "forward" wrt the usual reference frame.
+        # Yaw remains yaw, gimbal roll becomes camera pitch and gimbal pitch becomes camera roll.
+        # The angles now match azimuth, altitude and roll without any math operations other than
+        # sign changes and we get a full range of camera motion for pointing at celestial coordinates
+        # and rolling to any angle.
+        #
+        # See SimpleBGC 2.6 Serial Protocol Specification, Appendix D: Coordinate system conversions,
+        # Euler angles.
+        return altaz[1], -roll, -altaz[0]
+
+    @staticmethod
+    def gimbal_angles_to_altaz(yaw, pitch, roll):
+        return (-roll, yaw), -pitch
+
     def update_gimbal(self, continuous):
         if self.gimbal_paused.get():
             return
@@ -537,9 +562,7 @@ class GimbalGoToApp:
 
         if not continuous:
             ### TODO: apply calibration offsets to g_yaw, g_roll, g_pitch
-            g_yaw = altaz[1]
-            g_roll = altaz[0]
-            g_pitch = roll
+            g_yaw, g_pitch, g_roll = self.altaz_to_gimbal_angles(altaz, roll)
 
             self.gimbal.set_angles(g_yaw, g_pitch, g_roll)
 
@@ -562,21 +585,22 @@ class GimbalGoToApp:
         # TODO: we do need to do the angle tracking though because by controlling only the speed
         # we may be drifting towards or away from the target angles.
         dt = 5
-        new_delta = delta + dt * 1000000000
-        new_vec, new_roll = recalc_local_view_vector(self.base_view_vector, 0.0, self.observer_ll[0], new_delta)
-        new_altaz = get_alt_az_angles(new_vec)
+        t1_delta = delta + dt * 1000000000
+        t1_vec, t1_roll = recalc_local_view_vector(self.base_view_vector, 0.0, self.observer_ll[0], new_delta)
+        t1_altaz = get_alt_az_angles(t1_vec)
 
         ### TODO: apply calibration offsets to g_yaw, g_roll, g_pitch
-        g_yaw = altaz[1]
-        g_roll = altaz[0]
-        g_pitch = roll
-        g_yaw_rate = (new_altaz[1] - altaz[1]) / dt
-        g_roll_rate = (new_altaz[0] - altaz[0]) / dt
-        g_pitch_rate = (new_roll - roll) / dt
+        t0_g_angles = self.altaz_to_gimbal_angles(altaz, roll)
+        t1_g_angles = self.altaz_to_gimbal_angles(t1_altaz, t1_roll)
+        g_rates = (
+            (t1_g_angles[0] - t0_g_angles[0]) / dt,
+            (t1_g_angles[1] - t0_g_angles[1]) / dt,
+            (t1_g_angles[2] - t0_g_angles[2]) / dt)
 
-        self.gimbal.set_speeds_and_angles(g_yaw, g_pitch, g_roll, g_yaw_rate, g_roll_rate, g_pitch_rate, smooth_brake=False)
+        self.gimbal.set_speeds_and_angles(*t0_g_angles, *g_rates,  smooth_brake=False)
 
-    def get_timestamp(self):
+    @staticmethod
+    def get_timestamp():
         return time.clock_gettime_ns(time.CLOCK_BOOTTIME) # Or time.time_ns() for portability
 
     def get_delta(self):
@@ -627,14 +651,13 @@ class GimbalGoToApp:
         if status != 0:
             return
 
-        alt = angles[1]
-        az = angles[0]
+        altaz, roll = self.gimbal_angles_to_altaz(*angles)
         ### TODO: apply calibration offsets
-        vec = get_alt_az_vector((alt, az))
+        vec = get_alt_az_vector(altaz)
         self.set_view_vector(vec, update_gimbal=False)
 
         if self.observer_ll is None:
-            self.observer_ll = (40.0, 0.0)
+            self.observer_ll = (40.0, 0.0) # Accept as command line parameter instead? Do we maybe need config class?
 
         if self.fov is None:
             self.fov = 30.0
