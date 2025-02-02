@@ -169,7 +169,11 @@ def parse_ahrs_helper_cmd(payload: bytes) -> Optional[AhrsHelperInCmd]:
 
 def parse_realtime_data_custom_cmd(payload: bytes) \
         -> Optional[RealtimeDataCustomInCmd]:
-    return None
+    if len(payload) < 2: # No data other than timestamp if data set unimplemented in fw version
+        raise Exception('Payload too short')
+    payload_format = '<H{}s'.format(len(payload) - 2)
+    # noinspection PyProtectedMember
+    return RealtimeDataCustomInCmd._make(struct.unpack(payload_format, payload))
 
 
 def parse_adj_vars_state_cmd(payload: bytes) -> Optional[AdjVarsStateInCmd]:
