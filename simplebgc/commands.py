@@ -499,3 +499,48 @@ class ControlOutCmd(NamedTuple):
 
     def pack(self) -> bytes:
         return struct.pack('<BBBhhhhhh', *self)
+
+# outgoing CMD_CONTROL_EXT - controls gimbal movement, extended version
+class ControlExtOutCmd(NamedTuple):
+    data_set: int
+    roll_mode: int = ControlMode.MODE_NO_CONTROL
+    roll_flags: int = 0
+    roll_speed: int = 0
+    roll_angle: int = 0
+    pitch_mode: int = ControlMode.MODE_NO_CONTROL
+    pitch_flags: int = 0
+    pitch_speed: int = 0
+    pitch_angle: int = 0
+    yaw_mode: int = ControlMode.MODE_NO_CONTROL
+    yaw_flags: int = 0
+    yaw_speed: int = 0
+    yaw_angle: int = 0
+
+    def pack(self) -> bytes:
+        # Based on 2024 version of the spec
+        payload_format = '<H'
+        args = [self.data_set]
+        for bit_num, field_num in [(0, 1), (5, 5), (10, 9)]:
+            axis_set = self.data_set >> bit_num
+            if axis_set & 0xf == 0:
+                continue
+
+            mode = self[field_num + 0]
+            flags = self[field_num + 1]
+            speed = self[field_num + 2]
+            angle = self[field_num + 3]
+
+            payload_format += 'BB'
+            args += [mode, flags]
+
+            # Apparently bits 2 & 3 without 0 or 1 do nothing
+            # The four options are 0, 1 (low-res), 0+3, 1+2 (high-res)
+            if axis_set & (1 << 0):
+                payload_format += 'i' if axis_set & (1 << 3) else 'h'
+                args += [speed]
+
+            if axis_set & (1 << 1):
+                payload_format += 'i' if axis_set & (1 << 2) else 'h'
+                args += [angle]
+
+        return struct.pack(payload_format, *args)
