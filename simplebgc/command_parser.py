@@ -181,7 +181,11 @@ def parse_read_rc_inputs_cmd(payload: bytes) -> Optional[ReadRcInputsInCmd]:
 
 
 def parse_event_cmd(payload: bytes) -> Optional[EventInCmd]:
-    return None
+    if len(payload) < 4:
+        raise Exception('Payload too short')
+    payload_format = '<BBH{}s'.format(len(payload) - 4)
+    # noinspection PyProtectedMember
+    return ConfirmInCmd._make(struct.unpack(payload_format, payload))
 
 
 def parse_ext_imu_debug_info_cmd(payload: bytes) \

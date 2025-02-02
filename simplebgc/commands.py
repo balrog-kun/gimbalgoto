@@ -446,8 +446,21 @@ ReadRcInputsInCmd = NamedTuple('ReadRcInputsInCmd', [
 
 ])
 
-EventInCmd = NamedTuple('EventInCmd', [
+class EventID(enum.IntEnum):
+    """CMD_EVENT.EVENT_ID field values
+    """
+    EVENT_ID_MENU_BUTTON = 1
+    EVENT_ID_MOTOR_STATE = 2
+    EVENT_ID_EMERGENCY_STOP = 3
+    EVENT_ID_CAMERA = 4
+    EVENT_ID_SCRIPT = 5
+    EVENT_ID_RETRACTED_POSITION = 6
 
+EventInCmd = NamedTuple('EventInCmd', [
+    ('event_id', int),
+    ('event_type', int),
+    ('param1', int),
+    ('params', bytes),
 ])
 
 ExtImuDebugInfoInCmd = NamedTuple('ExtImuDebugInfoInCmd', [
