@@ -468,17 +468,34 @@ ExtImuDebugInfoInCmd = NamedTuple('ExtImuDebugInfoInCmd', [
 ])
 
 
-# outgoing CMD_CONTROL - control gimbal movement
+class ControlMode(enum.IntEnum): # TODO: IntFlag? Also check if we can drop the excepts and use MyEnum(5).name even if undefined
+    """CMD_CONTROL{,_EXT}.CONTROL_MODE field values
+    """
+    MODE_NO_CONTROL = 0
+    MODE_SPEED = 1
+    MODE_ANGLE = 2
+    MODE_ANGLE_SHORTEST = 8
+    MODE_SPEED_ANGLE = 3
+    MODE_RC = 4
+    MODE_RC_HIGH_RES = 6
+    MODE_ANGLE_REL_FRAME = 5
+    CONTROL_FLAG_AUTO_TASK = 1 << 6
+    CONTROL_FLAG_FORCE_RC_SPEED = 1 << 6
+    CONTROL_FLAG_HIGH_RES_SPEED = 1 << 7
+    CONTROL_FLAG_TARGET_PRECISE = 1 << 5
+    CONTROL_FLAG_MIX_FOLLOW = 1 << 4
+
+# outgoing CMD_CONTROL - controls gimbal movement
 class ControlOutCmd(NamedTuple):
     roll_mode: int
     pitch_mode: int
     yaw_mode: int
-    roll_speed: int
-    roll_angle: int
-    pitch_speed: int
-    pitch_angle: int
-    yaw_speed: int
-    yaw_angle: int
+    roll_speed: int = 0
+    roll_angle: int = 0
+    pitch_speed: int = 0
+    pitch_angle: int = 0
+    yaw_speed: int = 0
+    yaw_angle: int = 0
 
     def pack(self) -> bytes:
         return struct.pack('<BBBhhhhhh', *self)
