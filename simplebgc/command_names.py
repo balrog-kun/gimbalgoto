@@ -144,3 +144,16 @@ def get_outgoing_command_name(command_id: int) -> Optional[str]:
 
 def get_undocumented_command_name(command_id: int) -> Optional[str]:
     return UNDOCUMENTED_COMMAND_NAMES.get(command_id)
+
+
+def get_command_name(command_id: int) -> Optional[str]:
+    if command_id in INCOMING_COMMAND_NAMES:
+        return get_incoming_command_name(command_id)
+
+    if command_id in OUTGOING_COMMAND_NAMES:
+        return get_outgoing_command_name(command_id)
+
+    if command_id in UNDOCUMENTED_COMMAND_NAMES:
+        return get_undocumented_command_name(command_id)
+
+    return f"UNKNOWN({command_id})"
