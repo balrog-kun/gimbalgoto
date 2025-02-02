@@ -15,44 +15,109 @@ MessageHeader = namedtuple(
 
 MessagePayload = namedtuple(
     'MessagePayload',
-    'payload payload_checksum')
+    'payload checksum')
 
 Message = namedtuple(
     'Message',
-    'start_character command_id payload_size header_checksum payload payload_checksum')
+    'start_character command_id payload_size header_checksum payload checksum')
 
 # The following factor is used to convert degrees to the units used by the
 # SimpleBGC 2.6 serial protocol.
 degree_factor = 0.02197265625
 degree_per_sec_factor = 0.1220740379
 
+v1_start_char = 0x3e
+v2_start_char = 0x24
+
+v1_message_format = '<BBBB{}sB'
+v2_message_format = '<BBBB{}sH'
+
+v1_payload_format = '<{}sB'
+v2_payload_format = '<{}sH'
+
+# Default to version 2
+version = 2
+
+def get_v2_crc(command_id: int, payload: bytes) -> int:
+    crc = 0
+    def add_byte(byte):
+        nonlocal crc
+        for _ in range(8):
+            # The difference here from the usual implementation is that
+            # input is processed from LSB to MSB so we get better results
+            # by doing the whole calculation with crc bits inverted
+            if crc >> 15 != byte & 1:
+                crc = (crc << 1) ^ 0x8005
+            else:
+                crc <<= 1
+            byte >>= 1
+            crc &= 0xffff
+
+    payload_size = len(payload)
+    add_byte(command_id)
+    add_byte(payload_size)
+    add_byte(command_id + payload_size)
+    for byte in payload:
+        add_byte(byte)
+
+    return crc
+
+def validate_crc(message: Message) -> None:
+    if (message.command_id + message.payload_size) & 255 != message.header_checksum:
+        raise Exception('Wrong header checksum')
+
+    if message.start_character == v1_start_char:
+        checksum = sum(message.payload) & 255
+    else:
+        checksum = get_v2_crc(message.command_id, message.payload)
+
+    if checksum != message.checksum:
+        raise Exception('Wrong header checksum')
 
 def create_message(command_id: int, payload: bytes = b'') -> Message:
     payload_size = len(payload)
-    return Message(start_character=ord('>'),
+    start_char = v1_start_char if version == 1 else v2_start_char
+    checksum = sum(payload) % 255 if version == 1 else get_v2_crc(command_id, payload)
+
+    return Message(start_character=start_char,
                    command_id=command_id,
                    payload_size=payload_size,
-                   header_checksum=(command_id + payload_size) % 256,
+                   header_checksum=(command_id + payload_size) & 255,
                    payload=payload,
-                   payload_checksum=sum(payload) % 256)
+                   checksum=checksum)
 
 
 def pack_message(message: Message) -> bytes:
-    message_format = '<BBBB{}sB'.format(message.payload_size)
+    message_format = (v1_message_format if version == 1 else v2_message_format).format(message.payload_size)
     return struct.pack(message_format, *message)
 
 
-def unpack_message(data: bytes, payload_size: int) -> Message:
-    message_format = '<BBBB{}sB'.format(payload_size)
-    return Message._make(struct.unpack(message_format, data))
+def unpack_message(data: bytes) -> (Message, int):
+    header = MessageHeader._make(struct.unpack('<BBBB', data[:4]))
+    if header.start_character not in [v1_start_char, v2_start_char]:
+        raise Exception('Wrong header start char')
+
+    if (header.command_id + header.payload_size) & 255 != header.header_checksum:
+        raise Exception('Wrong header checksum')
+
+    crc_size = 2 if header.start_character == v2_start_char else 1
+    cmd_size = 4 + header.payload_size + crc_size
+
+    message_format = (v1_message_format if version == 1 else v2_message_format).format(header.payload_size)
+    message = Message._make(struct.unpack(message_format, data[:cmd_size]))
+    validate_crc(message)
+    return message, cmd_size
 
 
 def read_message(connection: serial.Serial, payload_size: int) -> Message:
-    # 5 is the length of the header + payload checksum byte
-    # 1 is the payload size
+    # 5 is the length of the header + v1 checksum size
     response_data = connection.read(5 + payload_size)
+    if response_data[0] == v2_start_char:
+        response_data += connection.read(1)
     # print('received response', response_data)
-    return unpack_message(response_data, payload_size)
+    message, consumed = unpack_message(response_data)
+    assert consumed == len(response_data)
+    return message
 
 
 def read_message_header(connection: serial.Serial) -> MessageHeader:
@@ -62,23 +127,28 @@ def read_message_header(connection: serial.Serial) -> MessageHeader:
 
 
 def read_message_payload(connection: serial.Serial,
-                         payload_size: int) -> MessagePayload:
-    # +1 because of payload checksum
-    payload_data = connection.read(payload_size + 1)
+                         header: MessageHeader) -> MessagePayload:
+    crc_size = 2 if header.start_character == v2_start_char else 1
+    payload_data = connection.read(header.payload_size + crc_size)
     logger.debug(f'received message payload data: {payload_data}')
-    payload_format = '<{}sB'.format(payload_size)
+    payload_format_format = v2_payload_format if header.start_character == v2_start_char else v1_payload_format
+    payload_format = payload_format_format.format(header.payload_size)
     return MessagePayload._make(struct.unpack(payload_format, payload_data))
 
 
 def read_cmd(connection: serial.Serial) -> RawCmd:
     header = read_message_header(connection)
     logger.debug(f'parsed message header: {header}')
-    assert header.start_character == 62
+    assert header.start_character in [v1_start_char, v2_start_char]
     checksum = (header.command_id + header.payload_size) % 256
     assert checksum == header.header_checksum
     payload = read_message_payload(connection, header.payload_size)
+    if header.start_character == v1_start_char:
+        checksum = sum(payload.payload) & 255
+    else:
+        checksum = get_v2_crc(header.command_id, payload.payload)
+    assert checksum == payload.checksum
     logger.debug(f'parsed message payload: {payload}')
-    assert sum(payload.payload) % 256 == payload.payload_checksum
     return RawCmd(header.command_id, payload.payload)
 
 
