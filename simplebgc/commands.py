@@ -544,3 +544,17 @@ class ControlExtOutCmd(NamedTuple):
                 args += [angle]
 
         return struct.pack(payload_format, *args)
+
+class MotorsOffMode(enum.IntEnum):
+    """CMD_MOTORS_OFF.MODE field values
+    """
+    MODE_NORMAL = 0 # Hi-Z
+    MODE_BRAKE = 1  # Low-Z, spec says "break"
+    MODE_SAFE_STOP = 2
+
+# outgoing CMD_MOTORS_OFF - switch motors OFF
+class MotorsOffOutCmd(NamedTuple):
+    mode: int = MotorsOffMode.MODE_NORMAL
+
+    def pack(self) -> bytes:
+        return struct.pack('<B', *self)
