@@ -1,5 +1,6 @@
 import struct
 from typing import NamedTuple
+import enum
 
 RawCmd = NamedTuple('RawCmd', [
     ('id', int),
@@ -343,8 +344,22 @@ ConfirmInCmd = NamedTuple('ConfirmInCmd', [
     ('data', bytes),
 ])
 
-ErrorInCmd = NamedTuple('ErrorInCmd', [
+class ErrorCodeBasic(enum.IntEnum):
+    """CMD_ERROR.ERROR_CODE field values
+    """
+    ERR_CMD_SIZE = 1
+    ERR_WRONG_PARAMS = 2
+    ERR_CRYPTO = 4
+    ERR_UNKNOWN_COMMAND = 6
+    ERR_WRONG_STATE = 8
+    ERR_NOT_SUPPORTED = 9
+    ERR_OPERATION_FAILED = 10
+    ERR_TEMPORARY = 11
 
+ErrorInCmd = NamedTuple('ErrorInCmd', [
+    ('cmd_id', int),
+    ('error_code', int),
+    ('error_data', bytes),
 ])
 
 GetAnglesInCmd = NamedTuple('GetAnglesInCmd', [
