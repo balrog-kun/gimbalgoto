@@ -85,8 +85,11 @@ def parse_realtime_data_4_cmd(payload: bytes) -> RealtimeData4InCmd:
 
 
 def parse_confirm_cmd(payload: bytes) -> ConfirmInCmd:
+    if len(payload) < 1:
+        raise Exception('Payload too short')
+    data_type = f'{len(payload) - 1}s'
     # noinspection PyProtectedMember
-    return ConfirmInCmd._make(struct.unpack('<', payload))
+    return ConfirmInCmd._make(struct.unpack('<B' + data_type, payload))
 
 
 def parse_error_cmd(payload: bytes) -> ErrorInCmd:
