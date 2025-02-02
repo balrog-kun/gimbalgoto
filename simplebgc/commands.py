@@ -339,7 +339,8 @@ RealtimeData4InCmd = NamedTuple('RealtimeData4InCmd', [
 ])
 
 ConfirmInCmd = NamedTuple('ConfirmInCmd', [
-
+    ('cmd_id', int),
+    ('data', bytes),
 ])
 
 ErrorInCmd = NamedTuple('ErrorInCmd', [
