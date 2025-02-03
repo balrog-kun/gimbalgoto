@@ -22,6 +22,7 @@ def calc_focal_length(fov):
 # Altitude degrees up from horizon
 # Roll degrees CW from level
 def get_alt_az_angles(vec):
+    # TODO: set az=0 close to zenith
     az = (math.degrees(math.atan2(vec[0], vec[1])) + 360) % 360  # Normalize to 0-360 degrees
     alt = math.degrees(math.asin(vec[2]))
     return alt, az
@@ -82,6 +83,36 @@ def recalc_local_view_vector(t0_local_vec, t0_local_roll, local_lat, delta_t):
     roll_delta = math.degrees(math.atan2(roll_vec[2], -roll_vec[0])) # atan2 returns angle from Y=1 axis
 
     return t1_local_vec, t0_local_roll + roll_delta
+
+def apply_roll_offset_to_altaz(altaz, roll, offset):
+    rroll = math.radians(roll)
+    one_minus_cos = 1.0 - math.cos(rroll)
+    sin = math.sin(rroll)
+
+    # Apply a correction for camera lens forward axis being slightly off from the gimbal roll axis.
+    #
+    # This is only an approximation because the constant-altitude line in alt-az coordinates forms a cone
+    # surface in 3D space while the constant Y line in the image frame (horizontal line) forms a plane in
+    # 3D, yet we calculate the horizontal offset as azimuth offset.  Additionally changing azimuth causes
+    # a roll in the image.
+    # But this approximation should be good for small offset angles, especially at lower altitudes.
+    # So we give up on applying the azimuth correction if we're very to zenith, otherwise we apply
+    # a factor of 1 / cos(altitude) to account for the same amount of shift in image coordinates causing
+    # a bigger difference in azimuth angle as altitude goes up.
+    #
+    # Ideally we should be applying this whole roll correction when we deal with vectors rather than
+    # angles, perhaps in recalc_local_view_vector.
+    alt_offset = -(one_minus_cos * offset[0] + sin * offset[1])
+    az_offset = -(one_minus_cos * offset[1] - sin * offset[0])
+
+    if altaz[0] < 89.0:
+        az_offset /= math.cos(math.radians(altaz[0]))
+        if math.abs(az_offset) > math.radians(1):
+            az_offset = 0
+    else:
+        az_offset = 0
+
+    return (altaz[0] + alt_offset, altaz[1] + az_offset)
 
 # Function to fetch data from Stellarium API
 def fetch_stellarium_view_data():
@@ -332,6 +363,9 @@ class GimbalGoToApp:
         self.sel_port_path = tk.StringVar()
         self.conn_port_str = tk.StringVar(value="Disconnected")
 
+        # TODO: convert to sliders
+        self.roll_offsets = (tk.DoubleVar(value=0.0), tk.DoubleVar(value=0.0))
+
         # Toggle state
         self.tracking_disabled = tk.BooleanVar(value=True)
         self.motors_off = tk.BooleanVar(value=False)
@@ -406,6 +440,7 @@ class GimbalGoToApp:
         self.arrow_buttons[2].grid(row=1, column=0)
         self.arrow_buttons[3].grid(row=1, column=2)
         # TODO roll buttons? zoom slider? also add sliders for roll centre calibration
+        # (self.roll_offsets)
         # The idea for roll centre calibration is that the user sets very high zoom on the
         # camera, sets the same focal length value here (or rather in Stellarium, then
         # loads view from Stellarium), rotates the camera using roll buttons, observes
@@ -560,6 +595,9 @@ class GimbalGoToApp:
         local_vec, roll = recalc_local_view_vector(self.base_view_vector, 0.0, self.observer_ll[0], delta)
         altaz = get_alt_az_angles(local_vec)
 
+        roll_offsets = (self.roll_offsets[0].get(), self.roll_offsets[1].get())
+        altaz = apply_roll_offset_to_altaz(altaz, roll, roll_offsets)
+
         if not continuous:
             ### TODO: apply calibration offsets to g_yaw, g_roll, g_pitch
             g_yaw, g_pitch, g_roll = self.altaz_to_gimbal_angles(altaz, roll)
@@ -588,6 +626,7 @@ class GimbalGoToApp:
         t1_delta = delta + dt * 1000000000
         t1_vec, t1_roll = recalc_local_view_vector(self.base_view_vector, 0.0, self.observer_ll[0], new_delta)
         t1_altaz = get_alt_az_angles(t1_vec)
+        t1_altaz = apply_roll_offset_to_altaz(t1_altaz, t1_roll, roll_offsets)
 
         ### TODO: apply calibration offsets to g_yaw, g_roll, g_pitch
         t0_g_angles = self.altaz_to_gimbal_angles(altaz, roll)
