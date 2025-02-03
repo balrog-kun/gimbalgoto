@@ -32,30 +32,37 @@ def get_alt_az_vector(altaz):
     az = math.radians(altaz[1])
     return (math.sin(az) * math.cos(alt), math.cos(az) * math.cos(alt), math.sin(alt))
 
+# Rotate about X axis
+def rotate_x(vec, deg):
+    a = math.radians(deg)
+    cos = math.cos(a)
+    sin = math.sin(a)
+    return vec[0], cos * vec[1] - sin * vec[2], cos * vec[2] + sin * vec[1]
+
+# Rotate about Y axis
+def rotate_y(vec, deg):
+    a = math.radians(deg)
+    cos = math.cos(a)
+    sin = math.sin(a)
+    return cos * vec[0] + sin * vec[2], vec[1], cos * vec[2] - sin * vec[0]
+
+# Rotate about Z axis
+def rotate_z(vec, deg):
+    a = math.radians(deg)
+    cos = math.cos(a)
+    sin = math.sin(a)
+    return cos * vec[0] + sin * vec[1], cos * vec[1] - sin * vec[0], vec[2]
+
+# Rotate by the negatives of the alt/az angles (X, Z axes) given as a vector
+def rotate_altaz00(vec, altaz):
+    # TODO: Normalize altaz
+    altaz_xy = math.hypot(altaz[0], altaz[1])
+    # Rotate to 0 azimuth
+    az0 = (vec[0] * altaz[1] - vec[1] * altaz[0], vec[1] * altaz[1] + vec[0] * altaz[0], vec[2])
+    # Rotate to 0 altitude
+    return (az0[0], az0[1] * altaz_xy + az0[2] * altaz[2], az0[2] * altaz_xy - az0[1] * altaz[2])
+
 def recalc_local_view_vector(t0_local_vec, t0_local_roll, local_lat, delta_t):
-    # Rotate about X axis
-    def rotate_x(vec, deg):
-        a = math.radians(deg)
-        cos = math.cos(a)
-        sin = math.sin(a)
-        return vec[0], cos * vec[1] - sin * vec[2], cos * vec[2] + sin * vec[1]
-
-    # Rotate about Y axis
-    def rotate_y(vec, deg):
-        a = math.radians(deg)
-        cos = math.cos(a)
-        sin = math.sin(a)
-        return cos * vec[0] + sin * vec[2], vec[1], cos * vec[2] - sin * vec[0]
-
-    # Rotate by the negatives of the alt/az angles (X, Z axes) given as a vector
-    def rotate_altaz00(vec, altaz):
-        # TODO: Normalize altaz
-        altaz_xy = math.hypot(altaz[0], altaz[1])
-        # Rotate to 0 azimuth
-        az0 = (vec[0] * altaz[1] - vec[1] * altaz[0], vec[1] * altaz[1] + vec[0] * altaz[0], vec[2])
-        # Rotate to 0 altitude
-        return (az0[0], az0[1] * altaz_xy + az0[2] * altaz[2], az0[2] * altaz_xy - az0[1] * altaz[2])
-
     delta_angle = delta_t * 360 / (1000000000 * 86164.0905) # delta_t (in ns) x 360 deg per 23h56min (in ns)
 
     # Our roll vector points to wherever left is in the camera frame.
@@ -113,6 +120,82 @@ def apply_roll_offset_to_altaz(altaz, roll, offset):
         az_offset = 0
 
     return (altaz[0] + alt_offset, altaz[1] + az_offset)
+
+# The following 4 functions return/accept angles in the order Yaw, Pitch, Roll (ypr),
+# regardless of the gimbal/camera configuration.  This is not the same as SimpleBGC API
+# standard order which uses Roll, Pitch, Yaw everywhere.
+
+# The Pilotfly H2 "euler order" is Cam, Pitch, Roll, Yaw, i.e. the pitch motor+arm is mounted
+# at the end of the roll motor+arm.  However by mounting the camera "sideways", looking
+# "right" instead of "forward" wrt the usual reference frame, the camera pitch and roll axes
+# are switched around with regards to gimbal pitch and roll.  Yaw remains yaw.
+# The angles now match azimuth, altitude and roll without new math operations other than
+# sign changes and we still get a full range of camera motion for pointing at celestial
+# coordinates and rolling to any angle.
+#
+# SimpleBGC 2.6 Serial Protocol Specification, Appendix D: Coordinate system conversions,
+# Euler angles:
+# "Serial API uses the following convention for Euler angles:
+#  • ROLL is over Y axis (forward), clockwise positive (if looking towards the axis direction)
+#  • PITCH is over X axis (right), counter-clockwise positive
+#  • YAW is over Z axis (down), clockwise positive"
+#
+# Use the following two functions if your camera is mounted this way.  The math is definitely
+# simpler.
+def get_simplebgc_ypr_from_vec(vec, roll):
+    altaz = get_alt_az_angles(vec)
+    return altaz[1], -roll, -altaz[0]
+
+def get_vec_from_simplebgc_ypr(g_yaw, g_pitch, g_roll):
+    return get_alt_az_vector((-g_roll, g_yaw)), -g_pitch
+
+# Use the following for standard camera position on Pilotfly H2 and most other SimpleBGC
+# gimbals.  Note the names are slightly different from the above ("yrp" vs. "ypr".)
+def get_simplebgc_yrp_from_vec(vec, roll):
+    # TODO: Normalize vec
+
+    cos_alt = vec[2]
+    sin_alt = math.hypot(vec[0], vec[1])
+    cos_az = vec[1] / sin_alt
+    sin_az = vec[0] / sin_alt
+    rroll = math.radians(roll)
+    cos_roll = math.cos(rroll)
+    sin_roll = math.sin(rroll)
+
+    # Get the camera "right" vector in the local reference frame (northing, easting, alt),
+    # this is going to be the desired gimbal pitch axis.
+    alt0az0_right = (cos_roll, 0, -sin_roll) # Point right in the camera frame
+    az0_right = (alt0az0_right[0], -sin_alt * alt0az0_right[2], cos_alt * alt0az0_right[2])
+    right = (cos_az * az0_right[0] + sin_az * az0_right[1], cos_az * az0_right[1] - sin_az * az0_right[0], az0_right[2])
+
+    right_cast_len = math.hypot(right[0], right[1])
+    if right_cast_len > 0.0001:
+        cos_g_yaw = right[0] / right_cast_len
+        sin_g_yaw = -right[1] / right_cast_len
+    else:
+        # If yaw and pitch axes are basically aligned, we only care about the sum of yaw+pitch
+        # Arbitrarily set yaw to 0 and pitch based on vec
+        cos_g_yaw = 1.0
+        sin_g_yaw = 0.0
+    cos_g_roll = cos_g_yaw * right[0] - sin_g_yaw * right[1] # Should be same as right_cast_len but signed
+    sin_g_roll = -right[2]
+    yaw0_vec = (cos_g_yaw * vec[0] - sin_g_yaw * vec[1], cos_g_yaw * vec[1] + sin_g_yaw * vec[0], vec[2])
+    cos_g_pitch = yaw0_vec[1]
+    sin_g_pitch = cos_g_roll * yaw0_vec[2] + sin_g_roll * yaw0_vec[0] # Same as math.hypot(yaw0_vec[0], yaw0_vec[2]) but signed
+
+    return (math.degrees(math.atan2(sin_g_yaw, cos_g_yaw)),
+        math.degrees(-math.atan2(sin_g_pitch, cos_g_pitch)),
+        math.degrees(math.atan2(sin_g_roll, cos_g_roll)))
+
+def get_vec_from_simplebgc_yrp(g_yaw, g_pitch, g_roll):
+    yaw0roll0_vec = rotate_x((0, 1, 0), -g_pitch)
+    yaw0_vec = rotate_y(yaw0roll0_vec, g_roll)
+    yaw0_right = rotate_y((1, 0, 0), g_roll)
+    vec = rotate_z(yaw0_vec, g_yaw)
+
+    yaw0pitch0_right = rotate_altaz00(yaw0_right, yaw0_vec)
+    roll = math.degrees(math.atan2(-yaw0pitch0_right[2], yaw0pitch0_right[0]))
+    return vec, roll
 
 # Function to fetch data from Stellarium API
 def fetch_stellarium_view_data():
@@ -342,6 +425,8 @@ class GimbalConnection:
 
 class GimbalGoToApp:
     default_port = "/dev/rfcomm0"
+    # Whether gimbal angles map to camera ypr or yrp
+    ypr = False
 
     def __init__(self, window):
         self.window = window
@@ -562,45 +647,30 @@ class GimbalGoToApp:
         self.gimbal.set_motors_on_off(not self.motors_off.get())
         self.update_widget_states()
 
-    @staticmethod
-    def altaz_to_gimbal_angles(altaz, roll):
-        # Modify this for other gimbals or other camera mounting options.
-        #
-        # This and the following function handle gimbal angles in the order Yaw, Pitch, Roll (ypr),
-        # this is not the same as SimpleBGC API standard order which uses Roll, Pitch, Yaw everywhere.
-        #
-        # The Pilotfly H2 "euler order" is Cam, Pitch, Roll, Yaw, i.e. the pitch motor+arm is mounted
-        # at the end of the roll motor+arm.  This means that with a camera mounted the normal way
-        # (looking forward, gimbal pitch is camera pitch), with a high enough roll the pitch angles
-        # become limited and at 90deg roll we're at a gimbal lock and pitch is 0.  Thus let's mount
-        # the camera sideways, looking "right" instead of "forward" wrt the usual reference frame.
-        # Yaw remains yaw, gimbal roll becomes camera pitch and gimbal pitch becomes camera roll.
-        # The angles now match azimuth, altitude and roll without any math operations other than
-        # sign changes and we get a full range of camera motion for pointing at celestial coordinates
-        # and rolling to any angle.
-        #
-        # See SimpleBGC 2.6 Serial Protocol Specification, Appendix D: Coordinate system conversions,
-        # Euler angles.
-        return altaz[1], -roll, -altaz[0]
+    @classmethod
+    def get_gimbal_angles_from_vec(cls, vec, roll):
+        if cls.ypr:
+            return get_simplebgc_ypr_from_vec(vec, roll)
+        else:
+            return get_simplebgc_yrp_from_vec(vec, roll)
 
-    @staticmethod
-    def gimbal_angles_to_altaz(yaw, pitch, roll):
-        return (-roll, yaw), -pitch
+    @classmethod
+    def get_vec_from_gimbal_angles(cls, g_yaw, g_pitch, g_roll):
+        if cls.ypr:
+            return get_vec_from_simplebgc_ypr(g_yaw, g_pitch, g_roll)
+        else:
+            return get_vec_from_simplebgc_yrp(g_yaw, g_pitch, g_roll)
 
     def update_gimbal(self, continuous):
-        if self.gimbal_paused.get():
+        if self.gimbal.connected_path() is None or self.gimbal_paused.get():
             return
 
         delta = self.get_delta()
         local_vec, roll = recalc_local_view_vector(self.base_view_vector, 0.0, self.observer_ll[0], delta)
-        altaz = get_alt_az_angles(local_vec)
-
-        roll_offsets = (self.roll_offsets[0].get(), self.roll_offsets[1].get())
-        altaz = apply_roll_offset_to_altaz(altaz, roll, roll_offsets)
 
         if not continuous:
             ### TODO: apply calibration offsets to g_yaw, g_roll, g_pitch
-            g_yaw, g_pitch, g_roll = self.altaz_to_gimbal_angles(altaz, roll)
+            g_yaw, g_pitch, g_roll = self.get_gimbal_angles_from_vec(local_vec, roll)
 
             self.gimbal.set_angles(g_yaw, g_pitch, g_roll)
 
@@ -624,13 +694,11 @@ class GimbalGoToApp:
         # we may be drifting towards or away from the target angles.
         dt = 5
         t1_delta = delta + dt * 1000000000
-        t1_vec, t1_roll = recalc_local_view_vector(self.base_view_vector, 0.0, self.observer_ll[0], new_delta)
-        t1_altaz = get_alt_az_angles(t1_vec)
-        t1_altaz = apply_roll_offset_to_altaz(t1_altaz, t1_roll, roll_offsets)
+        t1_vec, t1_roll = recalc_local_view_vector(self.base_view_vector, 0.0, self.observer_ll[0], t1_delta)
 
         ### TODO: apply calibration offsets to g_yaw, g_roll, g_pitch
-        t0_g_angles = self.altaz_to_gimbal_angles(altaz, roll)
-        t1_g_angles = self.altaz_to_gimbal_angles(t1_altaz, t1_roll)
+        t0_g_angles = self.get_gimbal_angles_from_vec(local_vec, roll)
+        t1_g_angles = self.get_gimbal_angles_from_vec(t1_vec, t1_roll)
         g_rates = (
             (t1_g_angles[0] - t0_g_angles[0]) / dt,
             (t1_g_angles[1] - t0_g_angles[1]) / dt,
@@ -690,9 +758,8 @@ class GimbalGoToApp:
         if status != 0:
             return
 
-        altaz, roll = self.gimbal_angles_to_altaz(*angles)
         ### TODO: apply calibration offsets
-        vec = get_alt_az_vector(altaz)
+        vec, roll = self.get_vec_from_gimbal_angles(*angles)
         self.set_view_vector(vec, update_gimbal=False)
 
         if self.observer_ll is None:
