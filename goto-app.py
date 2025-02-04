@@ -431,7 +431,6 @@ class GimbalGoToApp:
     def __init__(self, window):
         self.window = window
         self.window.title("Gimbal GoTo")
-        self.window.geometry("400x600") # TODO: make this automatic
 
         # Bind Escape key to exit
         self.window.bind("<Escape>", lambda event: self.exit_application())
@@ -507,7 +506,7 @@ class GimbalGoToApp:
         ttk.Label(frame, textvariable=self.focal_length_str).grid(row=fl_row, column=1, padx=5, pady=5, sticky="W")
 
         # Error message display
-        error_label = ttk.Label(frame, textvariable=self.error_message, foreground="red")
+        error_label = ttk.Label(frame, textvariable=self.error_message, foreground="red", wraplength=300)
         error_label.grid(row=next(), column=0, columnspan=2, pady=5)
 
         # Arrow buttons for manual adjustment
@@ -576,7 +575,7 @@ class GimbalGoToApp:
         connect_row = next()
         self.conn_button = ttk.Button(frame, text="Connect", command=self.port_connect_disconnect)
         self.conn_button.grid(row=connect_row, column=0, padx=5, pady=5, sticky="E")
-        ttk.Label(frame, textvariable=self.conn_port_str).grid(row=connect_row, column=1, padx=5, pady=5, sticky="W")
+        ttk.Label(frame, textvariable=self.conn_port_str, wraplength=300).grid(row=connect_row, column=1, padx=5, pady=5, sticky="W")
 
     def set_widget_state(self, widget, active):
         widget.config(state="normal" if active else "disabled")
