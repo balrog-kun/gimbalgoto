@@ -91,6 +91,33 @@ def recalc_local_view_vector(t0_local_vec, t0_local_roll, local_lat, delta_t):
 
     return t1_local_vec, t0_local_roll + roll_delta
 
+class CalibrationData():
+    def __init__(self):
+        # Alt and Az offsets defined as the angle in degrees we need to add to the real sky Alt-Az
+        # to get the gimbal to point at the right place.  This is just a starting point, we really
+        # eventually need 2-point and 3-point calibration.  But since the gimbal maintains its own
+        # sensor-based level/zenith reference, the pointing should be already good with only
+        # azimuth calibration needed.  We'll also need vertical/horizontal offsets for the camera
+        # mounting errors in the two axes (roll we don't care as much...), which we don't have yet,
+        # and the roll-center offsets which can maybe be fused with the above mounting error
+        # offsets.
+        self.az_offset = 0.0
+        self.alt_offset = 0.0        # Not used but may be informative
+        self.roll_offset_right = 0.0 # Not currently used
+        self.roll_offset_up = 0.0    # Not currently used
+
+    def apply_forward(self, vec, roll):
+        return rotate_z(vec, self.az_offset), roll
+
+    def apply_reverse(self, vec, roll):
+        return rotate_z(vec, -self.az_offset), roll
+
+    def updated(self):
+        print(f"Calibration updated to ({self.az_offset:.3f}°, {self.alt_offset:.3f}°, " + \
+            f"{self.roll_offset_right:.3f}°, {self.roll_offset_up:.3f}°)")
+
+# The below is now unused, needs to be adapted to work with the vector representatoin instead of
+# with the angles.
 def apply_roll_offset_to_altaz(altaz, roll, offset):
     rroll = math.radians(roll)
     one_minus_cos = 1.0 - math.cos(rroll)
@@ -447,7 +474,8 @@ class GimbalGoToApp:
         self.sel_port_path = tk.StringVar()
         self.conn_port_str = tk.StringVar(value="Disconnected")
 
-        # TODO: convert to sliders
+        # TODO: convert to sliders, automatically update self.calibaration on
+        # changes
         self.roll_offsets = (tk.DoubleVar(value=0.0), tk.DoubleVar(value=0.0))
 
         # Toggle state
@@ -465,6 +493,7 @@ class GimbalGoToApp:
         self.base_data_timestamp = None # Time the tracking was started, data was fetched or manually adjusted
         self.observer_ll = None
         self.fov = None
+        self.calibration = CalibrationData()
 
         self.update_widget_states()
         # TODO: refresh automatically, how? maybe listen to udev events, also automatically recognize USB serial as
@@ -666,10 +695,10 @@ class GimbalGoToApp:
 
         delta = self.get_delta()
         local_vec, roll = recalc_local_view_vector(self.base_view_vector, 0.0, self.observer_ll[0], delta)
+        calib_vec, calib_roll = self.calibration.apply_forward(local_vec, roll)
 
         if not continuous:
-            ### TODO: apply calibration offsets to g_yaw, g_roll, g_pitch
-            g_yaw, g_pitch, g_roll = self.get_gimbal_angles_from_vec(local_vec, roll)
+            g_yaw, g_pitch, g_roll = self.get_gimbal_angles_from_vec(calib_vec, calib_roll)
 
             self.gimbal.set_angles(g_yaw, g_pitch, g_roll)
 
@@ -694,10 +723,10 @@ class GimbalGoToApp:
         dt = 5
         t1_delta = delta + dt * 1000000000
         t1_vec, t1_roll = recalc_local_view_vector(self.base_view_vector, 0.0, self.observer_ll[0], t1_delta)
+        calib_t1_vec, calib_t1_roll = self.calibration.apply_forward(t1_vec, t1_roll)
 
-        ### TODO: apply calibration offsets to g_yaw, g_roll, g_pitch
-        t0_g_angles = self.get_gimbal_angles_from_vec(local_vec, roll)
-        t1_g_angles = self.get_gimbal_angles_from_vec(t1_vec, t1_roll)
+        t0_g_angles = self.get_gimbal_angles_from_vec(calib_vec, calib_roll)
+        t1_g_angles = self.get_gimbal_angles_from_vec(calib_t1_vec, calib_t1_roll)
         g_rates = (
             (t1_g_angles[0] - t0_g_angles[0]) / dt,
             (t1_g_angles[1] - t0_g_angles[1]) / dt,
@@ -755,10 +784,11 @@ class GimbalGoToApp:
 
     def gimbal_angles_cb(self, status, angles=(0.0, 0.0, 0.0)):
         if status != 0:
+            self.update_widget_states()
             return
 
-        ### TODO: apply calibration offsets
-        vec, roll = self.get_vec_from_gimbal_angles(*angles)
+        calib_vec, calib_roll = self.get_vec_from_gimbal_angles(*angles)
+        vec, roll = self.calibration.apply_reverse(calib_vec, calib_roll)
         self.set_view_vector(vec, update_gimbal=False)
 
         if self.observer_ll is None:
@@ -771,12 +801,30 @@ class GimbalGoToApp:
         self.update_ui_info()
 
     def calib_gimbal(self):
-        self.gimbal.get_angles(gimbal_calib_cb)
+        if self.gimbal.connected_path() is None or self.gimbal.is_busy():
+            raise Exception("Wrong gimbal connection state")
+
+        self.gimbal.get_angles(self.gimbal_calib_cb)
         self.update_widget_states()
 
-    def gimbal_calib_cb(self, angles):
+    def gimbal_calib_cb(self, status, angles=(0.0, 0.0, 0.0)):
+        if status != 0:
+            self.update_widget_states()
+            return
+
+        delta = self.get_delta()
+        local_vec, roll = recalc_local_view_vector(self.base_view_vector, 0.0, self.observer_ll[0], delta)
+
+        gimbal_vec, gimbal_roll = self.get_vec_from_gimbal_angles(*angles)
+
+        true_altaz = get_alt_az_angles(local_vec)
+        gimbal_altaz = get_alt_az_angles(gimbal_vec)
+
+        self.calibration.az_offset = (gimbal_altaz[1] - true_altaz[1]) % 360.0
+        self.calibration.alt_offset = gimbal_altaz[0] - true_altaz[0]
+        self.calibration.updated()
+
         self.update_widget_states()
-        ### TODO
         pass
 
     def update_ui_info(self):
