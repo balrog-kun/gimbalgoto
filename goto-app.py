@@ -226,6 +226,7 @@ def get_vec_from_simplebgc_yrp(g_yaw, g_pitch, g_roll):
 
 # Function to fetch data from Stellarium API
 def fetch_stellarium_view_data():
+    # TODO: make async, plug into the main loop
     response = requests.get("http://localhost:8090/api/main/view")
     response.raise_for_status()
     data = response.json()
@@ -772,8 +773,32 @@ class GimbalGoToApp:
         self.update_ui_info()
 
     def calib_stellarium(self):
-        ### TODO
-        pass
+        try:
+            vec, fov, obs = fetch_stellarium_view_data()
+        except Exception as e:
+            self.error_message.set(f"Error fetching or parsing data: {e}")
+            log_error('Error fetching or parsing data', e)
+            return
+
+        # Not strictly raw gimbal vector as it has our offsets applied (if any) so we will add the
+        # angle differences to existing calibration angles instead of replacing them.
+        delta = self.get_delta()
+        gimbal_off_vec, roll = recalc_local_view_vector(self.base_view_vector, 0.0, self.observer_ll[0], delta)
+
+        true_altaz = get_alt_az_angles(vec)
+        gimbal_off_altaz = get_alt_az_angles(gimbal_off_vec)
+
+        self.calibration.az_offset += gimbal_off_altaz[1] - true_altaz[1]
+        self.calibration.az_offset = self.calibration.az_offset % 360.0
+        self.calibration.alt_offset = gimbal_off_altaz[0] - true_altaz[0]
+        self.calibration.updated()
+
+        self.set_view_vector(vec)
+        self.observer_ll = obs
+        self.fov = fov
+
+        self.error_message.set("")  # Clear any previous error message
+        self.update_ui_info()
 
     def fetch_gimbal(self):
         if self.gimbal.connected_path() is None or self.gimbal.is_busy():
